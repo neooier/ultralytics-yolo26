@@ -476,11 +476,37 @@ class v8SegmentationLoss(v8DetectionLoss):
         super().__init__(model, tal_topk, tal_topk2)
         self.overlap = model.args.overlap_mask
         self.bcedice_loss = BCEDiceLoss(weight_bce=0.5, weight_dice=0.5)
+        head = model.model[-1]
+        self.n_color = getattr(head, "n_color", 0)
+        self.n_material = getattr(head, "n_material", 0)
+
+    @staticmethod
+    def _build_attr_targets(
+        batch: dict[str, torch.Tensor],
+        batch_size: int,
+        key: str,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        """Build per-image attribute targets."""
+        if key not in batch:
+            return None
+        targets = batch[key].view(-1).to(device)
+        batch_idx = batch["batch_idx"].view(-1).to(device)
+        if targets.numel() == 0:
+            return torch.zeros((batch_size, 0), device=device, dtype=targets.dtype)
+        _, counts = batch_idx.unique(return_counts=True)
+        max_count = int(counts.max()) if counts.numel() else 0
+        out = torch.full((batch_size, max_count), -1, device=device, dtype=targets.dtype)
+        for j in range(batch_size):
+            matches = batch_idx == j
+            if (num := int(matches.sum())):
+                out[j, :num] = targets[matches]
+        return out
 
     def loss(self, preds: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate and return the combined loss for detection and segmentation."""
         pred_masks, proto = preds["mask_coefficient"].permute(0, 2, 1).contiguous(), preds["proto"]
-        loss = torch.zeros(5, device=self.device)  # box, seg, cls, dfl
+        loss = torch.zeros(5, device=self.device)  # box, seg, cls, dfl, sem
         if isinstance(proto, tuple) and len(proto) == 2:
             proto, pred_semseg = proto
         else:
@@ -534,7 +560,39 @@ class v8SegmentationLoss(v8DetectionLoss):
             if pred_semseg is not None:
                 loss[4] += (pred_semseg * 0).sum()
 
+        extra_losses = []
+
+        color_scores = preds.get("color_scores")
+        if self.n_color and color_scores is not None and "colors" in batch:
+            color_loss = torch.tensor(0.0, device=self.device)
+            color_targets = self._build_attr_targets(batch, batch_size, "colors", self.device)
+            if fg_mask.sum() and color_targets is not None and color_targets.shape[1]:
+                attr_idx = target_gt_idx.clamp(min=0)
+                target_color = color_targets.gather(1, attr_idx)[fg_mask].long()
+                color_loss = F.cross_entropy(color_scores.permute(0, 2, 1)[fg_mask], target_color, reduction="mean")
+            else:
+                color_loss += (color_scores * 0).sum()
+            color_loss *= getattr(self.hyp, "color", self.hyp.cls)
+            extra_losses.append(color_loss)
+
+        material_scores = preds.get("material_scores")
+        if self.n_material and material_scores is not None and "materials" in batch:
+            material_loss = torch.tensor(0.0, device=self.device)
+            material_targets = self._build_attr_targets(batch, batch_size, "materials", self.device)
+            if fg_mask.sum() and material_targets is not None and material_targets.shape[1]:
+                attr_idx = target_gt_idx.clamp(min=0)
+                target_material = material_targets.gather(1, attr_idx)[fg_mask].long()
+                material_loss = F.cross_entropy(
+                    material_scores.permute(0, 2, 1)[fg_mask], target_material, reduction="mean"
+                )
+            else:
+                material_loss += (material_scores * 0).sum()
+            material_loss *= getattr(self.hyp, "material", self.hyp.cls)
+            extra_losses.append(material_loss)
+
         loss[1] *= self.hyp.box  # seg gain
+        if extra_losses:
+            loss = torch.cat([loss, *[item.unsqueeze(0) for item in extra_losses]])
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
 
     @staticmethod
