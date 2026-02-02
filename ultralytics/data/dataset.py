@@ -115,14 +115,14 @@ class YOLODataset(BaseDataset):
                     repeat(self.prefix),
                     repeat(self.use_keypoints),
                     repeat(len(self.data["names"])),
-                    repeat(bool(self.data.get("colors") or self.data.get("materials"))),
+                    repeat(bool(self.data.get("completeness") or self.data.get("orientation"))),
                     repeat(nkpt),
                     repeat(ndim),
                     repeat(self.single_cls),
                 ),
             )
             pbar = TQDM(results, desc=desc, total=total)
-            for im_file, lb, shape, segments, keypoint, colors, materials, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+            for im_file, lb, shape, segments, keypoint, completeness, orientation, nm_f, nf_f, ne_f, nc_f, msg in pbar:
                 nm += nm_f
                 nf += nf_f
                 ne += ne_f
@@ -136,8 +136,8 @@ class YOLODataset(BaseDataset):
                             "bboxes": lb[:, 1:],  # n, 4
                             "segments": segments,
                             "keypoints": keypoint,
-                            "colors": colors,
-                            "materials": materials,
+                            "completeness": completeness,
+                            "orientation": orientation,
                             "normalized": True,
                             "bbox_format": "xywh",
                         }
@@ -301,7 +301,7 @@ class YOLODataset(BaseDataset):
                 value = torch.stack(value, 0)
             elif k == "visuals":
                 value = torch.nn.utils.rnn.pad_sequence(value, batch_first=True)
-            if k in {"masks", "keypoints", "bboxes", "cls", "colors", "materials", "segments", "obb"}:
+            if k in {"masks", "keypoints", "bboxes", "cls", "completeness", "orientation", "segments", "obb"}:
                 value = torch.cat(value, 0)
             new_batch[k] = value
         new_batch["batch_idx"] = list(new_batch["batch_idx"])

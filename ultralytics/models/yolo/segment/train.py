@@ -65,10 +65,10 @@ class SegmentationTrainer(yolo.detect.DetectionTrainer):
         """Return an instance of SegmentationValidator for validation of YOLO model."""
         self.loss_names = ["box_loss", "seg_loss", "cls_loss", "dfl_loss", "sem_loss"]
         head = self.model.model[-1]
-        if getattr(head, "n_color", 0) > 0:
-            self.loss_names.append("color_loss")
-        if getattr(head, "n_material", 0) > 0:
-            self.loss_names.append("material_loss")
+        if getattr(head, "n_completeness", 0) > 0:
+            self.loss_names.append("completeness_loss")
+        if getattr(head, "n_orientation", 0) > 0:
+            self.loss_names.append("orientation_loss")
         return yolo.segment.SegmentationValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
