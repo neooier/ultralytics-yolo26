@@ -795,10 +795,16 @@ class Mosaic(BaseMixTransform):
         if not mosaic_labels:
             return {}
         cls = []
+        colors = []
+        materials = []
         instances = []
         imgsz = self.imgsz * 2  # mosaic imgsz
         for labels in mosaic_labels:
             cls.append(labels["cls"])
+            if "colors" in labels:
+                colors.append(labels["colors"])
+            if "materials" in labels:
+                materials.append(labels["materials"])
             instances.append(labels["instances"])
         # Final labels
         final_labels = {
@@ -809,9 +815,17 @@ class Mosaic(BaseMixTransform):
             "instances": Instances.concatenate(instances, axis=0),
             "mosaic_border": self.border,
         }
+        if colors:
+            final_labels["colors"] = np.concatenate(colors, 0)
+        if materials:
+            final_labels["materials"] = np.concatenate(materials, 0)
         final_labels["instances"].clip(imgsz, imgsz)
         good = final_labels["instances"].remove_zero_area_boxes()
         final_labels["cls"] = final_labels["cls"][good]
+        if "colors" in final_labels:
+            final_labels["colors"] = final_labels["colors"][good]
+        if "materials" in final_labels:
+            final_labels["materials"] = final_labels["materials"][good]
         if "texts" in mosaic_labels[0]:
             final_labels["texts"] = mosaic_labels[0]["texts"]
         return final_labels
@@ -872,6 +886,10 @@ class MixUp(BaseMixTransform):
         labels["img"] = (labels["img"] * r + labels2["img"] * (1 - r)).astype(np.uint8)
         labels["instances"] = Instances.concatenate([labels["instances"], labels2["instances"]], axis=0)
         labels["cls"] = np.concatenate([labels["cls"], labels2["cls"]], 0)
+        if "colors" in labels:
+            labels["colors"] = np.concatenate([labels["colors"], labels2["colors"]], 0)
+        if "materials" in labels:
+            labels["materials"] = np.concatenate([labels["materials"], labels2["materials"]], 0)
         return labels
 
 
@@ -985,6 +1003,10 @@ class CutMix(BaseMixTransform):
         instances2.add_padding(x1, y1)
 
         labels["cls"] = np.concatenate([labels["cls"], labels2["cls"][indexes2]], axis=0)
+        if "colors" in labels:
+            labels["colors"] = np.concatenate([labels["colors"], labels2["colors"][indexes2]], axis=0)
+        if "materials" in labels:
+            labels["materials"] = np.concatenate([labels["materials"], labels2["materials"][indexes2]], axis=0)
         labels["instances"] = Instances.concatenate([labels["instances"], instances2], axis=0)
         return labels
 
@@ -1294,6 +1316,10 @@ class RandomPerspective:
         )
         labels["instances"] = new_instances[i]
         labels["cls"] = cls[i]
+        if "colors" in labels:
+            labels["colors"] = labels["colors"][i]
+        if "materials" in labels:
+            labels["materials"] = labels["materials"][i]
         labels["img"] = img
         labels["resized_shape"] = img.shape[:2]
         return labels
@@ -1885,8 +1911,9 @@ class Albumentations:
 
             # Compose transforms
             self.contains_spatial = any(transform.__class__.__name__ in spatial_transforms for transform in T)
+            self.label_fields = ["class_labels", "color_labels", "material_labels"]
             self.transform = (
-                A.Compose(T, bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"]))
+                A.Compose(T, bbox_params=A.BboxParams(format="yolo", label_fields=self.label_fields))
                 if self.contains_spatial
                 else A.Compose(T)
             )
@@ -1938,15 +1965,29 @@ class Albumentations:
 
         if self.contains_spatial:
             cls = labels["cls"]
+            colors = labels.get("colors")
+            materials = labels.get("materials")
             if len(cls):
                 labels["instances"].convert_bbox("xywh")
                 labels["instances"].normalize(*im.shape[:2][::-1])
                 bboxes = labels["instances"].bboxes
                 # TODO: add supports of segments and keypoints
-                new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
+                color_labels = colors if colors is not None else np.zeros_like(cls)
+                material_labels = materials if materials is not None else np.zeros_like(cls)
+                new = self.transform(
+                    image=im,
+                    bboxes=bboxes,
+                    class_labels=cls,
+                    color_labels=color_labels,
+                    material_labels=material_labels,
+                )  # transformed
                 if len(new["class_labels"]) > 0:  # skip update if no bbox in new im
                     labels["img"] = new["image"]
                     labels["cls"] = np.array(new["class_labels"]).reshape(-1, 1)
+                    if colors is not None:
+                        labels["colors"] = np.array(new["color_labels"]).reshape(-1, 1)
+                    if materials is not None:
+                        labels["materials"] = np.array(new["material_labels"]).reshape(-1, 1)
                     bboxes = np.array(new["bboxes"], dtype=np.float32)
                 labels["instances"].update(bboxes=bboxes)
         else:
@@ -2053,6 +2094,8 @@ class Format:
         img = labels.pop("img")
         h, w = img.shape[:2]
         cls = labels.pop("cls")
+        colors = labels.pop("colors", None)
+        materials = labels.pop("materials", None)
         instances = labels.pop("instances")
         instances.convert_bbox(format=self.bbox_format)
         instances.denormalize(w, h)
@@ -2084,6 +2127,10 @@ class Format:
             labels["sem_masks"] = sem_masks.float()
         labels["img"] = self._format_img(img)
         labels["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl, 1)
+        if colors is not None:
+            labels["colors"] = torch.from_numpy(colors) if nl else torch.zeros(nl, 1)
+        if materials is not None:
+            labels["materials"] = torch.from_numpy(materials) if nl else torch.zeros(nl, 1)
         labels["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
         if self.return_keypoint:
             labels["keypoints"] = (
@@ -2364,6 +2411,10 @@ class RandomLoadText:
             new_cls.append([label2ids[label]])
         labels["instances"] = labels["instances"][valid_idx]
         labels["cls"] = np.array(new_cls)
+        if "colors" in labels:
+            labels["colors"] = labels["colors"][valid_idx]
+        if "materials" in labels:
+            labels["materials"] = labels["materials"][valid_idx]
 
         # Randomly select one prompt when there's more than one prompts
         texts = []

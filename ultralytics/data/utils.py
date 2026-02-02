@@ -179,9 +179,10 @@ def verify_image(args: tuple) -> tuple:
 
 def verify_image_label(args: tuple) -> list:
     """Verify one image-label pair."""
-    im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim, single_cls = args
+    im_file, lb_file, prefix, keypoint, num_cls, attr_labels, nkpt, ndim, single_cls = args
     # Number (missing, found, empty, corrupt), message, segments, keypoints
     nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
+    colors, materials = None, None
     try:
         # Verify images
         im = Image.open(im_file)
@@ -202,9 +203,25 @@ def verify_image_label(args: tuple) -> list:
             nf = 1  # label found
             with open(lb_file, encoding="utf-8") as f:
                 lb = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                has_attrs = bool(attr_labels)
+                if not keypoint and lb and not has_attrs:
+                    for row in lb:
+                        if len(row) >= 7 and (len(row) - 3) % 2 == 0:
+                            try:
+                                if float(row[1]) >= 1 or float(row[2]) >= 1:
+                                    has_attrs = True
+                                    break
+                            except (TypeError, ValueError):
+                                continue
                 if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
-                    classes = np.array([x[0] for x in lb], dtype=np.float32)
-                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                    if has_attrs:
+                        classes = np.array([x[0] for x in lb], dtype=np.float32)
+                        colors = np.array([x[1] for x in lb], dtype=np.float32).reshape(-1, 1)
+                        materials = np.array([x[2] for x in lb], dtype=np.float32).reshape(-1, 1)
+                        segments = [np.array(x[3:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                    else:
+                        classes = np.array([x[0] for x in lb], dtype=np.float32)
+                        segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
                     lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
                 lb = np.array(lb, dtype=np.float32)
             if nl := len(lb):
@@ -212,6 +229,10 @@ def verify_image_label(args: tuple) -> list:
                     assert lb.shape[1] == (5 + nkpt * ndim), f"labels require {(5 + nkpt * ndim)} columns each"
                     points = lb[:, 5:].reshape(-1, ndim)[:, :2]
                 else:
+                    if lb.shape[1] == 7:
+                        colors = lb[:, 1:2]
+                        materials = lb[:, 2:3]
+                        lb = np.concatenate((lb[:, 0:1], lb[:, 3:7]), 1)
                     assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
                     points = lb[:, 1:]
                 # Coordinate points check with 1% tolerance
@@ -241,12 +262,16 @@ def verify_image_label(args: tuple) -> list:
             if ndim == 2:
                 kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
+        if colors is None:
+            colors = np.zeros((lb.shape[0], 1), dtype=np.float32)
+        if materials is None:
+            materials = np.zeros((lb.shape[0], 1), dtype=np.float32)
         lb = lb[:, :5]
-        return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
+        return im_file, lb, shape, segments, keypoints, colors, materials, nm, nf, ne, nc, msg
     except Exception as e:
         nc = 1
         msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
-        return [None, None, None, None, None, nm, nf, ne, nc, msg]
+        return [None, None, None, None, None, None, None, nm, nf, ne, nc, msg]
 
 
 def visualize_image_annotations(image_path: str, txt_path: str, label_map: dict[int, str]):
