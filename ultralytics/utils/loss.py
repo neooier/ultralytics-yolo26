@@ -477,8 +477,8 @@ class v8SegmentationLoss(v8DetectionLoss):
         self.overlap = model.args.overlap_mask
         self.bcedice_loss = BCEDiceLoss(weight_bce=0.5, weight_dice=0.5)
         head = model.model[-1]
-        self.n_color = getattr(head, "n_color", 0)
-        self.n_material = getattr(head, "n_material", 0)
+        self.n_completeness = getattr(head, "n_completeness", 0)
+        self.n_orientation = getattr(head, "n_orientation", 0)
 
     @staticmethod
     def _build_attr_targets(
@@ -562,33 +562,35 @@ class v8SegmentationLoss(v8DetectionLoss):
 
         extra_losses = []
 
-        color_scores = preds.get("color_scores")
-        if self.n_color and color_scores is not None and "colors" in batch:
-            color_loss = torch.tensor(0.0, device=self.device)
-            color_targets = self._build_attr_targets(batch, batch_size, "colors", self.device)
-            if fg_mask.sum() and color_targets is not None and color_targets.shape[1]:
+        completeness_scores = preds.get("completeness_scores")
+        if self.n_completeness and completeness_scores is not None and "completeness" in batch:
+            completeness_loss = torch.tensor(0.0, device=self.device)
+            completeness_targets = self._build_attr_targets(batch, batch_size, "completeness", self.device)
+            if fg_mask.sum() and completeness_targets is not None and completeness_targets.shape[1]:
                 attr_idx = target_gt_idx.clamp(min=0)
-                target_color = color_targets.gather(1, attr_idx)[fg_mask].long()
-                color_loss = F.cross_entropy(color_scores.permute(0, 2, 1)[fg_mask], target_color, reduction="mean")
-            else:
-                color_loss += (color_scores * 0).sum()
-            color_loss *= getattr(self.hyp, "color", self.hyp.cls)
-            extra_losses.append(color_loss)
-
-        material_scores = preds.get("material_scores")
-        if self.n_material and material_scores is not None and "materials" in batch:
-            material_loss = torch.tensor(0.0, device=self.device)
-            material_targets = self._build_attr_targets(batch, batch_size, "materials", self.device)
-            if fg_mask.sum() and material_targets is not None and material_targets.shape[1]:
-                attr_idx = target_gt_idx.clamp(min=0)
-                target_material = material_targets.gather(1, attr_idx)[fg_mask].long()
-                material_loss = F.cross_entropy(
-                    material_scores.permute(0, 2, 1)[fg_mask], target_material, reduction="mean"
+                target_completeness = completeness_targets.gather(1, attr_idx)[fg_mask].long()
+                completeness_loss = F.cross_entropy(
+                    completeness_scores.permute(0, 2, 1)[fg_mask], target_completeness, reduction="mean"
                 )
             else:
-                material_loss += (material_scores * 0).sum()
-            material_loss *= getattr(self.hyp, "material", self.hyp.cls)
-            extra_losses.append(material_loss)
+                completeness_loss += (completeness_scores * 0).sum()
+            completeness_loss *= getattr(self.hyp, "completeness", self.hyp.cls)
+            extra_losses.append(completeness_loss)
+
+        orientation_scores = preds.get("orientation_scores")
+        if self.n_orientation and orientation_scores is not None and "orientation" in batch:
+            orientation_loss = torch.tensor(0.0, device=self.device)
+            orientation_targets = self._build_attr_targets(batch, batch_size, "orientation", self.device)
+            if fg_mask.sum() and orientation_targets is not None and orientation_targets.shape[1]:
+                attr_idx = target_gt_idx.clamp(min=0)
+                target_orientation = orientation_targets.gather(1, attr_idx)[fg_mask].long()
+                orientation_loss = F.cross_entropy(
+                    orientation_scores.permute(0, 2, 1)[fg_mask], target_orientation, reduction="mean"
+                )
+            else:
+                orientation_loss += (orientation_scores * 0).sum()
+            orientation_loss *= getattr(self.hyp, "orientation", self.hyp.cls)
+            extra_losses.append(orientation_loss)
 
         loss[1] *= self.hyp.box  # seg gain
         if extra_losses:

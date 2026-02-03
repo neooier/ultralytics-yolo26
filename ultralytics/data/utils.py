@@ -182,7 +182,7 @@ def verify_image_label(args: tuple) -> list:
     im_file, lb_file, prefix, keypoint, num_cls, attr_labels, nkpt, ndim, single_cls = args
     # Number (missing, found, empty, corrupt), message, segments, keypoints
     nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
-    colors, materials = None, None
+    completeness, orientation = None, None
     try:
         # Verify images
         im = Image.open(im_file)
@@ -216,8 +216,8 @@ def verify_image_label(args: tuple) -> list:
                 if any(len(x) > 6 for x in lb) and (not keypoint):  # is segment
                     if has_attrs:
                         classes = np.array([x[0] for x in lb], dtype=np.float32)
-                        colors = np.array([x[1] for x in lb], dtype=np.float32).reshape(-1, 1)
-                        materials = np.array([x[2] for x in lb], dtype=np.float32).reshape(-1, 1)
+                        completeness = np.array([x[1] for x in lb], dtype=np.float32).reshape(-1, 1)
+                        orientation = np.array([x[2] for x in lb], dtype=np.float32).reshape(-1, 1)
                         segments = [np.array(x[3:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
                     else:
                         classes = np.array([x[0] for x in lb], dtype=np.float32)
@@ -230,8 +230,8 @@ def verify_image_label(args: tuple) -> list:
                     points = lb[:, 5:].reshape(-1, ndim)[:, :2]
                 else:
                     if lb.shape[1] == 7:
-                        colors = lb[:, 1:2]
-                        materials = lb[:, 2:3]
+                        completeness = lb[:, 1:2]
+                        orientation = lb[:, 2:3]
                         lb = np.concatenate((lb[:, 0:1], lb[:, 3:7]), 1)
                     assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
                     points = lb[:, 1:]
@@ -262,12 +262,12 @@ def verify_image_label(args: tuple) -> list:
             if ndim == 2:
                 kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
-        if colors is None:
-            colors = np.zeros((lb.shape[0], 1), dtype=np.float32)
-        if materials is None:
-            materials = np.zeros((lb.shape[0], 1), dtype=np.float32)
+        if completeness is None:
+            completeness = np.zeros((lb.shape[0], 1), dtype=np.float32)
+        if orientation is None:
+            orientation = np.zeros((lb.shape[0], 1), dtype=np.float32)
         lb = lb[:, :5]
-        return im_file, lb, shape, segments, keypoints, colors, materials, nm, nf, ne, nc, msg
+        return im_file, lb, shape, segments, keypoints, completeness, orientation, nm, nf, ne, nc, msg
     except Exception as e:
         nc = 1
         msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"

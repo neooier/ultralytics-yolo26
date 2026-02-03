@@ -382,8 +382,8 @@ class Segment26(Segment):
         nc: int = 80,
         nm: int = 32,
         npr: int = 256,
-        n_color: int = 0,
-        n_material: int = 0,
+        n_completeness: int = 0,
+        n_orientation: int = 0,
         reg_max=16,
         end2end=False,
         ch: tuple = (),
@@ -394,52 +394,52 @@ class Segment26(Segment):
             nc (int): Number of classes.
             nm (int): Number of masks.
             npr (int): Number of protos.
-            n_color (int): Number of color classes.
-            n_material (int): Number of material classes.
+            n_completeness (int): Number of completeness classes.
+            n_orientation (int): Number of orientation classes.
             reg_max (int): Maximum number of DFL channels.
             end2end (bool): Whether to use end-to-end NMS-free detection.
             ch (tuple): Tuple of channel sizes from backbone feature maps.
         """
         super().__init__(nc, nm, npr, reg_max, end2end, ch)
         self.proto = Proto26(ch, self.npr, self.nm, nc)  # protos
-        self.n_color = n_color
-        self.n_material = n_material
-        self.cv_color = None
-        self.cv_material = None
+        self.n_completeness = n_completeness
+        self.n_orientation = n_orientation
+        self.cv_completeness = None
+        self.cv_orientation = None
 
-        if self.n_color > 0:
-            c3 = max(ch[0], min(self.n_color, 100))
-            self.cv_color = nn.ModuleList(
-                nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.n_color, 1)) for x in ch
+        if self.n_completeness > 0:
+            c3 = max(ch[0], min(self.n_completeness, 100))
+            self.cv_completeness = nn.ModuleList(
+                nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.n_completeness, 1)) for x in ch
             )
-        if self.n_material > 0:
-            c3 = max(ch[0], min(self.n_material, 100))
-            self.cv_material = nn.ModuleList(
-                nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.n_material, 1)) for x in ch
+        if self.n_orientation > 0:
+            c3 = max(ch[0], min(self.n_orientation, 100))
+            self.cv_orientation = nn.ModuleList(
+                nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.n_orientation, 1)) for x in ch
             )
-        if end2end and self.cv_color is not None:
-            self.one2one_cv_color = copy.deepcopy(self.cv_color)
-        if end2end and self.cv_material is not None:
-            self.one2one_cv_material = copy.deepcopy(self.cv_material)
+        if end2end and self.cv_completeness is not None:
+            self.one2one_cv_completeness = copy.deepcopy(self.cv_completeness)
+        if end2end and self.cv_orientation is not None:
+            self.one2one_cv_orientation = copy.deepcopy(self.cv_orientation)
 
     @property
     def one2many(self):
         """Returns the one-to-many head components."""
         heads = dict(box_head=self.cv2, cls_head=self.cv3, mask_head=self.cv4)
-        if self.cv_color is not None:
-            heads["color_head"] = self.cv_color
-        if self.cv_material is not None:
-            heads["material_head"] = self.cv_material
+        if self.cv_completeness is not None:
+            heads["completeness_head"] = self.cv_completeness
+        if self.cv_orientation is not None:
+            heads["orientation_head"] = self.cv_orientation
         return heads
 
     @property
     def one2one(self):
         """Returns the one-to-one head components."""
         heads = dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, mask_head=self.one2one_cv4)
-        if hasattr(self, "one2one_cv_color"):
-            heads["color_head"] = self.one2one_cv_color
-        if hasattr(self, "one2one_cv_material"):
-            heads["material_head"] = self.one2one_cv_material
+        if hasattr(self, "one2one_cv_completeness"):
+            heads["completeness_head"] = self.one2one_cv_completeness
+        if hasattr(self, "one2one_cv_orientation"):
+            heads["orientation_head"] = self.one2one_cv_orientation
         return heads
 
     def forward_head(
@@ -448,20 +448,20 @@ class Segment26(Segment):
         box_head: torch.nn.Module,
         cls_head: torch.nn.Module,
         mask_head: torch.nn.Module,
-        color_head: torch.nn.Module | None = None,
-        material_head: torch.nn.Module | None = None,
+        completeness_head: torch.nn.Module | None = None,
+        orientation_head: torch.nn.Module | None = None,
     ) -> torch.Tensor:
         """Concatenates and returns predicted boxes, class probabilities, mask coefficients, and attributes."""
         preds = super().forward_head(x, box_head, cls_head, mask_head)
-        if color_head is not None:
+        if completeness_head is not None:
             bs = x[0].shape[0]
-            preds["color_scores"] = torch.cat(
-                [color_head[i](x[i]).view(bs, self.n_color, -1) for i in range(self.nl)], dim=-1
+            preds["completeness_scores"] = torch.cat(
+                [completeness_head[i](x[i]).view(bs, self.n_completeness, -1) for i in range(self.nl)], dim=-1
             )
-        if material_head is not None:
+        if orientation_head is not None:
             bs = x[0].shape[0]
-            preds["material_scores"] = torch.cat(
-                [material_head[i](x[i]).view(bs, self.n_material, -1) for i in range(self.nl)], dim=-1
+            preds["orientation_scores"] = torch.cat(
+                [orientation_head[i](x[i]).view(bs, self.n_orientation, -1) for i in range(self.nl)], dim=-1
             )
         return preds
 
