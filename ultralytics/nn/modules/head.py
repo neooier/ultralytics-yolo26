@@ -480,6 +480,23 @@ class Segment26(Segment):
                 preds["proto"] = proto
         if self.training:
             return preds
+        if self.export:
+            # Export extra attribute heads for downstream consumers (e.g. ONNX postprocess).
+            if self.end2end:
+                x_detach = [xi.detach() for xi in x]
+                raw = self.forward_head(x_detach, **self.one2one)
+            else:
+                raw = self.forward_head(x, **self.one2many)
+            y = self._inference(raw)
+            if self.end2end:
+                y = self.postprocess(y.permute(0, 2, 1))
+            return (
+                y,
+                proto,
+                raw.get("scores"),
+                raw.get("completeness_scores"),
+                raw.get("orientation_scores"),
+            )
         return (outputs, proto) if self.export else ((outputs[0], proto), preds)
 
     def fuse(self) -> None:
